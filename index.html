@@ -1,0 +1,524 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#eff3fa">
+  <title>動画リアクションプレイヤー</title>
+  <style>
+    :root {
+      font-family: "UD デジタル 教科書体 NK-R", "Hiragino Kaku Gothic ProN", "Yu Gothic", "Meiryo", system-ui, sans-serif;
+      color: #202b43;
+      background: #eff3fa;
+      font-synthesis: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+    *, *::before, *::after { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+    body { margin: 0; min-width: 320px; }
+    button, input { font: inherit; }
+    button { touch-action: manipulation; cursor: pointer; }
+    button:disabled { opacity: .43; cursor: not-allowed; }
+    button:focus-visible, input:focus-visible, .tap-surface:focus-visible {
+      outline: 4px solid #8fb6ff; outline-offset: 3px;
+    }
+    .app {
+      width: min(100%, 1480px);
+      min-height: 100dvh;
+      margin: 0 auto;
+      padding: clamp(12px, 1.8vw, 24px);
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .topbar {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 14px; min-height: 56px; flex-wrap: wrap;
+    }
+    .brand { display: flex; align-items: center; gap: 12px; min-width: 0; }
+    .brand-badge {
+      width: 48px; height: 48px; display: grid; place-items: center;
+      background: #3159d8; color: white; border-radius: 15px;
+      box-shadow: 0 5px 15px #3159d82a; flex: none;
+    }
+    .brand-badge svg { width: 26px; height: 26px; }
+    h1 { font-size: clamp(19px, 2.4vw, 27px); line-height: 1.25; margin: 0; letter-spacing: .01em; }
+    .subtitle { font-size: 12px; font-weight: 650; color: #65728c; margin: 4px 0 0; }
+    .right-head { display: flex; gap: 10px; align-items: center; margin-left: auto; }
+    .privacy {
+      display: inline-flex; gap: 6px; align-items: center; white-space: nowrap;
+      color: #23785b; font-size: 13px; font-weight: 750;
+      background: #e1f7ed; border: 1px solid #baead3; border-radius: 20px;
+      padding: 9px 13px;
+    }
+    .upload-button {
+      display: inline-flex; align-items: center; justify-content: center; gap: 9px;
+      background: #fff; border: 1px solid #d7dfec; border-radius: 13px;
+      min-height: 46px; padding: 10px 16px; font-size: 15px; font-weight: 800;
+      color: #253758; box-shadow: 0 2px 8px #2636530d;
+    }
+    .upload-button svg { width: 18px; height: 18px; }
+    .upload-button:hover { background: #f9fbff; border-color: #9fb1d2; }
+    .file-input { display: none; }
+    .stage {
+      position: relative; flex: 1 1 auto; min-height: 290px;
+      height: clamp(290px, 56vh, 800px); max-height: calc(100dvh - 296px);
+      background: #0c1424;
+      border: 4px solid #fff;
+      border-radius: 23px;
+      overflow: hidden;
+      box-shadow: 0 12px 32px #24385a1c, 0 1px 3px #24385a14;
+      isolation: isolate;
+    }
+    .stage video {
+      width: 100%; height: 100%; position: absolute; inset: 0;
+      display: block; object-fit: contain; background: #0c1424;
+    }
+    .stage::before {
+      content: ""; position: absolute; inset: 0; pointer-events: none;
+      background: radial-gradient(ellipse at 50% 60%, #1c3050 0%, #0c1424 65%);
+    }
+    .stage.has-video::before { display: none; }
+    .empty-state {
+      position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center;
+      justify-content: center; text-align: center; padding: 18px; color: #fff;
+    }
+    .empty-icon {
+      width: 84px; height: 84px; display: grid; place-items: center;
+      color: #becdf1; background: #ffffff14; border: 1px solid #ffffff20;
+      border-radius: 24px; margin-bottom: 14px;
+    }
+    .empty-icon svg { width: 43px; height: 43px; }
+    .empty-state h2 { font-size: clamp(20px, 3vw, 28px); margin: 0 0 7px; }
+    .empty-state p { margin: 0 0 22px; line-height: 1.7; color: #b5c4db; font-size: 14px; }
+    .empty-choose {
+      min-height: 48px; border: 0; border-radius: 13px;
+      background: #fff; color: #2549aa; padding: 10px 23px;
+      font-weight: 800; font-size: 16px;
+    }
+    .empty-choose:hover { background: #e8efff; }
+    .tap-surface {
+      position: absolute; z-index: 2; display: none;
+      touch-action: manipulation; cursor: crosshair;
+      overflow: hidden; user-select: none; -webkit-user-select: none;
+    }
+    .has-video .tap-surface { display: block; }
+    .video-filename {
+      position: absolute; z-index: 1; top: 14px; left: 16px;
+      max-width: min(70%, 540px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      font-size: 13px; font-weight: 650; color: #fff;
+      background: #111c2ca8; padding: 8px 12px; border-radius: 9px;
+      pointer-events: none;
+    }
+    .reaction-stamp {
+      position: absolute; transform: translate(-50%, -50%); pointer-events: none;
+      z-index: 3; width: max-content; max-width: 230px; display: flex; flex-direction: column;
+      align-items: center; gap: 2px; will-change: opacity, transform;
+      animation: stamp-fly 1500ms cubic-bezier(.16,.85,.3,1) forwards;
+      filter: drop-shadow(0 5px 9px #0007);
+    }
+    .stamp-icon {
+      display: grid; place-items: center; width: 65px; height: 65px;
+      font-size: 39px; border-radius: 50%; border: 3px solid white;
+      background: #dbeaff;
+    }
+    .stamp-word {
+      display: block; padding: 5px 12px 6px; border: 2px solid #fff;
+      border-radius: 100px; font-size: 18px; font-weight: 900; line-height: 1.2;
+      white-space: nowrap; background: #2679e5; color: white; letter-spacing: .03em;
+    }
+    .reaction-stamp.cheer .stamp-icon { background: #fff0c4; }
+    .reaction-stamp.cheer .stamp-word { background: #ef841c; }
+    /* がんばろうは未達成箇所を示すため、キラキラの効果を付けない */
+    .reaction-stamp.cheer::before, .reaction-stamp.cheer::after { display: none; }
+    .reaction-stamp::before, .reaction-stamp::after {
+      content: "✦"; position: absolute; font-size: 29px; color: #ffdc68;
+      top: 2px; left: -25px; animation: twinkle 700ms ease-out both;
+    }
+    .reaction-stamp::after { top: 11px; left: auto; right: -22px; font-size: 23px; animation-delay: 120ms; }
+    @keyframes stamp-fly {
+      0% { opacity: 0; translate: 0 18px; scale: .3; rotate: -13deg; }
+      14% { opacity: 1; translate: 0 0; scale: 1.16; rotate: 5deg; }
+      28% { scale: 1; rotate: 0deg; }
+      68% { opacity: 1; translate: 0 -7px; scale: 1; }
+      100% { opacity: 0; translate: 0 -48px; scale: .83; }
+    }
+    @keyframes twinkle { from { opacity: 0; transform: scale(.2) rotate(-30deg); } to { opacity: 1; transform: scale(1.2) rotate(20deg); } }
+    .bottom { display: flex; flex-direction: column; gap: 12px; }
+    .player-controls {
+      display: flex; align-items: center; gap: 13px; flex-wrap: wrap;
+      padding: 13px 17px; background: #fff; border: 1px solid #dfe5ef;
+      border-radius: 17px; box-shadow: 0 2px 9px #2636530a;
+    }
+    .play-btn {
+      background: #3159d8; border: 0; color: white; border-radius: 13px;
+      width: 52px; height: 49px; display: grid; place-items: center; flex: none;
+    }
+    .play-btn:hover:not(:disabled) { background: #2544b2; }
+    .play-btn svg { width: 25px; height: 25px; fill: currentColor; }
+    .seek-group { flex: 1 1 210px; min-width: 100px; display: flex; flex-direction: column; gap: 5px; }
+    .control-label { display: flex; justify-content: space-between; gap: 12px; font-size: 12px; font-weight: 750; color: #63738f; }
+    .control-label .now-file { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .time { white-space: nowrap; font-variant-numeric: tabular-nums; }
+    input[type="range"] { width: 100%; margin: 4px 0; accent-color: #345ddb; min-height: 20px; touch-action: pan-x; cursor: pointer; }
+    input[type="range"]:disabled { cursor: not-allowed; }
+    .sound-btn {
+      display: grid; place-items: center; width: 49px; height: 49px; flex: none;
+      background: #f2f5fa; border: 1px solid #e5ebf4; border-radius: 13px;
+      color: #334967;
+    }
+    .sound-btn svg { width: 23px; height: 23px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+    .reaction-panel {
+      display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+      padding: 15px 19px; background: #fff; border: 1px solid #dfe5ef;
+      border-radius: 18px; box-shadow: 0 2px 9px #2636530a;
+    }
+    .reaction-info { flex: 1 0 225px; }
+    .reaction-info h2 { margin: 0 0 5px; font-size: 17px; }
+    .reaction-info p { margin: 0; font-size: 13px; font-weight: 650; line-height: 1.55; color: #687895; }
+    .reaction-picks { flex: 1 1 400px; display: grid; grid-template-columns: 1fr 1fr; gap: 11px; }
+    .reaction-btn {
+      min-height: 85px; border-radius: 15px; border: 2px solid transparent;
+      display: flex; align-items: center; justify-content: center; gap: 11px;
+      font-size: clamp(16px, 2.1vw, 22px); font-weight: 900; line-height: 1.2;
+      transition: background .12s, border-color .12s, transform .12s;
+    }
+    .reaction-btn:active { transform: scale(.98); }
+    .reaction-btn span.icon-emoji { font-family: system-ui, sans-serif; font-size: clamp(28px, 3.6vw, 39px); }
+    .reaction-btn.like { background: #eaf3ff; border-color: #eaf3ff; color: #1d66bd; }
+    .reaction-btn.cheer { background: #fff3df; border-color: #fff3df; color: #ac5d0c; }
+    .reaction-btn.like.selected { border-color: #2b77e3; background: #dceaff; box-shadow: inset 0 0 0 2px white, 0 0 0 2px #c9dffb; }
+    .reaction-btn.cheer.selected { border-color: #e38a1f; background: #ffebc7; box-shadow: inset 0 0 0 2px white, 0 0 0 2px #ffe4ad; }
+    .status-line { min-height: 22px; padding: 0 6px; display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 750; color: #60728f; }
+    .status-dot { width: 8px; height: 8px; flex: none; border-radius: 50%; background: #9aacbd; }
+    .status-line.active .status-dot { background: #24a574; }
+    .status-line.warning .status-dot { background: #e49922; }
+    @media (min-width: 1100px) and (min-height: 750px) { .stage { max-height: calc(100dvh - 310px); } }
+    @media (max-width: 730px) {
+      .topbar { gap: 10px; }
+      .right-head { width: 100%; justify-content: space-between; }
+      .privacy { font-size: 11px; padding: 8px 10px; }
+      .upload-button { min-height: 42px; font-size: 13px; padding: 8px 10px; }
+      .brand-badge { width: 40px; height: 40px; border-radius: 12px; }
+      .brand-badge svg { width: 23px; height: 23px; }
+      .subtitle { display: none; }
+      .stage { min-height: 230px; height: 46vh; max-height: none; border-radius: 17px; border-width: 3px; }
+      .player-controls { gap: 9px; padding: 11px; }
+      .reaction-panel { padding: 13px; gap: 10px; }
+      .reaction-info { flex-basis: 100%; }
+      .reaction-info h2 { font-size: 15px; }
+      .reaction-picks { flex-basis: 100%; }
+      .reaction-btn { min-height: 74px; gap: 7px; }
+      .stamp-icon { width: 53px; height: 53px; font-size: 32px; }
+      .stamp-word { font-size: 15px; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .reaction-stamp { animation: stamp-fade 1150ms linear forwards; }
+      .reaction-stamp::before, .reaction-stamp::after { animation: none; }
+      @keyframes stamp-fade { 0% {opacity: 0;} 12% {opacity: 1;} 75% {opacity: 1;} 100% {opacity: 0;} }
+    }
+  </style>
+</head>
+<body>
+  <main class="app">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-badge" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none"><rect x="2" y="4" width="20" height="16" rx="4" stroke="currentColor" stroke-width="2"/><path d="m10 8 6 4-6 4V8Z" fill="currentColor"/></svg>
+        </div>
+        <div>
+          <h1>動画リアクションプレイヤー</h1>
+          <p class="subtitle">動画を見ながら、タップで応援マーク！</p>
+        </div>
+      </div>
+      <div class="right-head">
+        <div class="privacy" aria-label="動画は外部に送信されません">🔒 動画は外部に送信しません</div>
+        <button type="button" class="upload-button" id="changeVideo">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 16V3m0 0L7 8m5-5 5 5M5 17v3h14v-3"/></svg>
+          動画を選ぶ・変更
+        </button>
+      </div>
+    </header>
+
+    <input class="file-input" id="fileInput" type="file" accept="video/*,.mp4,.m4v,.mov,.webm" aria-label="端末内の動画ファイルを選択">
+
+    <section class="stage" id="stage" aria-label="動画の表示エリア">
+      <video id="video" playsinline webkit-playsinline preload="metadata" disablepictureinpicture controlslist="nodownload noremoteplayback" aria-label="選択した動画"></video>
+      <div id="tapSurface" class="tap-surface" aria-label="選んだリアクションを置く場所"></div>
+      <span id="filenameBadge" class="video-filename" hidden></span>
+      <div id="emptyState" class="empty-state">
+        <div class="empty-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none"><rect x="2" y="4" width="20" height="16" rx="4" stroke="currentColor" stroke-width="1.7"/><path d="m10 8 6 4-6 4V8Z" fill="currentColor"/></svg>
+        </div>
+        <h2>動画を読み込んでください</h2>
+        <p>端末にある動画を一時的に開きます。<br>動画ファイルがネットに送られることはありません。</p>
+        <button type="button" id="emptyChoose" class="empty-choose">動画を選ぶ</button>
+      </div>
+    </section>
+
+    <div class="bottom">
+      <section class="player-controls" aria-label="再生コントロール">
+        <button type="button" class="play-btn" id="playBtn" disabled aria-label="再生">
+          <svg id="playIcon" viewBox="0 0 24 24" aria-hidden="true"><path d="m8 4 13 8-13 8V4Z"/></svg>
+          <svg id="pauseIcon" viewBox="0 0 24 24" aria-hidden="true" hidden><path d="M6 4h4v16H6zm8 0h4v16h-4z"/></svg>
+        </button>
+        <div class="seek-group">
+          <div class="control-label">
+            <span id="nowFile" class="now-file">動画が選択されていません</span>
+            <span class="time"><span id="currentTime">0:00</span> / <span id="duration">0:00</span></span>
+          </div>
+          <input type="range" id="seek" min="0" max="1000" step="1" value="0" disabled aria-label="再生位置">
+        </div>
+        <button type="button" id="soundBtn" class="sound-btn" aria-label="音を消す" disabled>
+          <svg id="soundOn" viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4V5Zm5 3a5 5 0 0 1 0 8m2-11a9 9 0 0 1 0 14"/></svg>
+          <svg id="soundOff" viewBox="0 0 24 24" aria-hidden="true" hidden><path d="M11 5 6 9H3v6h3l5 4V5Zm5 4 6 6m0-6-6 6"/></svg>
+        </button>
+      </section>
+
+      <section class="reaction-panel" aria-label="リアクションの選択">
+        <div class="reaction-info">
+          <h2>① マークを選ぼう！</h2>
+          <p id="reactionHelp">② 動画の好きな場所をタップすると、マークが出ます。</p>
+        </div>
+        <div class="reaction-picks" role="group" aria-label="表示するマーク">
+          <button type="button" id="likeBtn" class="reaction-btn like" aria-pressed="false">
+            <span class="icon-emoji" aria-hidden="true">👍</span> イイね！
+          </button>
+          <button type="button" id="cheerBtn" class="reaction-btn cheer" aria-pressed="false">
+            <span class="icon-emoji" aria-hidden="true">😞</span> がんばろう！
+          </button>
+        </div>
+      </section>
+      <div id="status" class="status-line" role="status" aria-live="polite">
+        <span class="status-dot" aria-hidden="true"></span>
+        <span id="statusText">動画を選んでから、再生できます。</span>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    (() => {
+      'use strict';
+
+      // 完全ローカル読み込み。fetch / XMLHttpRequest / アップロードは使用しません。
+      const $ = id => document.getElementById(id);
+      const video = $('video');
+      const fileInput = $('fileInput');
+      const stage = $('stage');
+      const tapSurface = $('tapSurface');
+      const emptyState = $('emptyState');
+      const filenameBadge = $('filenameBadge');
+      const nowFile = $('nowFile');
+      const playBtn = $('playBtn');
+      const playIcon = $('playIcon');
+      const pauseIcon = $('pauseIcon');
+      const soundBtn = $('soundBtn');
+      const soundOn = $('soundOn');
+      const soundOff = $('soundOff');
+      const seek = $('seek');
+      const likeBtn = $('likeBtn');
+      const cheerBtn = $('cheerBtn');
+      const status = $('status');
+      const statusText = $('statusText');
+
+      let objectUrl = null;
+      let currentReaction = null;
+      let loaded = false;
+      let lastFileName = '';
+
+      const chooseVideo = () => fileInput.click();
+      $('changeVideo').addEventListener('click', chooseVideo);
+      $('emptyChoose').addEventListener('click', chooseVideo);
+
+      function setStatus(message, state = '') {
+        statusText.textContent = message;
+        status.classList.toggle('active', state === 'active');
+        status.classList.toggle('warning', state === 'warning');
+      }
+
+      function timeString(seconds) {
+        if (!Number.isFinite(seconds) || seconds < 0) return '0:00';
+        const n = Math.floor(seconds);
+        const min = Math.floor(n / 60);
+        const sec = String(n % 60).padStart(2, '0');
+        return min >= 60 ? `${Math.floor(min / 60)}:${String(min % 60).padStart(2, '0')}:${sec}` : `${min}:${sec}`;
+      }
+
+      function updateTimeline() {
+        const duration = Number.isFinite(video.duration) ? video.duration : 0;
+        $('currentTime').textContent = timeString(video.currentTime);
+        $('duration').textContent = timeString(duration);
+        seek.value = duration > 0 ? String(Math.round(video.currentTime / duration * 1000)) : '0';
+      }
+
+      function updatePlayback() {
+        const isPlaying = loaded && !video.paused && !video.ended;
+        playIcon.hidden = isPlaying;
+        pauseIcon.hidden = !isPlaying;
+        playBtn.setAttribute('aria-label', isPlaying ? '一時停止' : '再生');
+      }
+
+      function updateSound() {
+        soundOn.hidden = video.muted;
+        soundOff.hidden = !video.muted;
+        soundBtn.setAttribute('aria-label', video.muted ? '音を出す' : '音を消す');
+      }
+
+      function fitTapArea() {
+        if (!loaded || !video.videoWidth || !video.videoHeight) return;
+        const w = stage.clientWidth;
+        const h = stage.clientHeight;
+        const scale = Math.min(w / video.videoWidth, h / video.videoHeight);
+        const imageWidth = video.videoWidth * scale;
+        const imageHeight = video.videoHeight * scale;
+        tapSurface.style.left = `${(w - imageWidth) / 2}px`;
+        tapSurface.style.top = `${(h - imageHeight) / 2}px`;
+        tapSurface.style.width = `${imageWidth}px`;
+        tapSurface.style.height = `${imageHeight}px`;
+      }
+
+      function clearStamps() { tapSurface.replaceChildren(); }
+
+      function loadVideo(file) {
+        if (!file) return;
+        const isVideo = file.type.startsWith('video/') || /\.(mp4|m4v|mov|webm|ogv|ogg)$/i.test(file.name);
+        if (!isVideo) { setStatus('動画ファイルを選んでください。', 'warning'); return; }
+
+        // 前の動画のオブジェクトURLを解放。どちらの動画もアップロードしません。
+        video.pause();
+        video.removeAttribute('src');
+        video.load();
+        if (objectUrl) URL.revokeObjectURL(objectUrl);
+        objectUrl = URL.createObjectURL(file);
+        lastFileName = file.name;
+        loaded = false;
+        clearStamps();
+        stage.classList.remove('has-video');
+        emptyState.hidden = true;
+        filenameBadge.hidden = true;
+        nowFile.textContent = `読み込み中：${file.name}`;
+        seek.value = 0;
+        playBtn.disabled = true;
+        seek.disabled = true;
+        soundBtn.disabled = true;
+        updateTimeline();
+        updatePlayback();
+        setStatus('動画を読み込んでいます…');
+        video.src = objectUrl;
+        video.load();
+      }
+
+      fileInput.addEventListener('change', () => {
+        const file = fileInput.files && fileInput.files[0];
+        if (file) loadVideo(file);
+        fileInput.value = ''; // 同じ動画を選び直せるようにする
+      });
+
+      video.addEventListener('loadedmetadata', () => {
+        loaded = true;
+        stage.classList.add('has-video');
+        playBtn.disabled = false;
+        soundBtn.disabled = false;
+        seek.disabled = !Number.isFinite(video.duration) || video.duration <= 0;
+        nowFile.textContent = lastFileName;
+        filenameBadge.textContent = lastFileName;
+        filenameBadge.hidden = false;
+        fitTapArea();
+        updateTimeline();
+        updatePlayback();
+        setStatus('動画を読み込みました。再生ボタンで再生できます。', 'active');
+      });
+
+      video.addEventListener('error', () => {
+        if (!objectUrl) return;
+        loaded = false;
+        stage.classList.remove('has-video');
+        emptyState.hidden = false;
+        filenameBadge.hidden = true;
+        playBtn.disabled = true;
+        seek.disabled = true;
+        soundBtn.disabled = true;
+        nowFile.textContent = 'この動画を再生できません';
+        updatePlayback();
+        setStatus('この動画形式はブラウザで再生できません。MP4形式などをお試しください。', 'warning');
+      });
+
+      async function togglePlayback() {
+        if (!loaded) return;
+        if (!video.paused && !video.ended) { video.pause(); return; }
+        try { await video.play(); }
+        catch (error) { setStatus('再生できませんでした。対応する動画形式か確認してください。', 'warning'); }
+      }
+      playBtn.addEventListener('click', togglePlayback);
+      video.addEventListener('play', updatePlayback);
+      video.addEventListener('pause', updatePlayback);
+      video.addEventListener('ended', updatePlayback);
+      video.addEventListener('timeupdate', updateTimeline);
+      video.addEventListener('durationchange', () => {
+        seek.disabled = !loaded || !Number.isFinite(video.duration) || video.duration <= 0;
+        updateTimeline();
+      });
+      seek.addEventListener('input', () => {
+        if (loaded && Number.isFinite(video.duration) && video.duration > 0)
+          video.currentTime = (Number(seek.value) / 1000) * video.duration;
+      });
+      soundBtn.addEventListener('click', () => { video.muted = !video.muted; updateSound(); });
+      video.addEventListener('volumechange', updateSound);
+
+      function selectReaction(type) {
+        currentReaction = currentReaction === type ? null : type;
+        const likeSelected = currentReaction === 'like';
+        const cheerSelected = currentReaction === 'cheer';
+        likeBtn.classList.toggle('selected', likeSelected);
+        cheerBtn.classList.toggle('selected', cheerSelected);
+        likeBtn.setAttribute('aria-pressed', String(likeSelected));
+        cheerBtn.setAttribute('aria-pressed', String(cheerSelected));
+        if (!currentReaction) setStatus('マークは未選択です。ボタンを押すと選べます。');
+        else setStatus(`${likeSelected ? 'イイね！' : 'がんばろう！'}を選択中。動画の好きな場所をタップしてください。`, 'active');
+      }
+      likeBtn.addEventListener('click', () => selectReaction('like'));
+      cheerBtn.addEventListener('click', () => selectReaction('cheer'));
+
+      function addStamp(x, y) {
+        const stamp = document.createElement('div');
+        stamp.className = `reaction-stamp ${currentReaction}`;
+        stamp.style.left = `${x}px`;
+        stamp.style.top = `${y}px`;
+        const icon = document.createElement('span');
+        icon.className = 'stamp-icon';
+        icon.textContent = currentReaction === 'like' ? '👍' : '😞';
+        const word = document.createElement('span');
+        word.className = 'stamp-word';
+        word.textContent = currentReaction === 'like' ? 'イイね！' : 'がんばろう！';
+        stamp.append(icon, word);
+        tapSurface.append(stamp);
+        stamp.addEventListener('animationend', () => stamp.remove(), { once: true });
+        // 万一アニメーションイベントが発火しない環境でも残さない
+        setTimeout(() => stamp.remove(), 1850);
+      }
+      tapSurface.addEventListener('pointerdown', event => {
+        if (!loaded || (event.pointerType === 'mouse' && event.button !== 0)) return;
+        event.preventDefault();
+        if (!currentReaction) {
+          setStatus('先に「イイね！」か「がんばろう！」を選んでください。', 'warning');
+          return;
+        }
+        const rect = tapSurface.getBoundingClientRect();
+        // タップした位置を基準に表示（画面端では少しだけ内側に寄せる）
+        const marginX = Math.min(65, rect.width / 2);
+        const marginY = Math.min(65, rect.height / 2);
+        const x = Math.min(Math.max(event.clientX - rect.left, marginX), rect.width - marginX);
+        const y = Math.min(Math.max(event.clientY - rect.top, marginY), rect.height - marginY);
+        addStamp(x, y);
+      });
+
+      if (typeof ResizeObserver !== 'undefined') new ResizeObserver(fitTapArea).observe(stage);
+      window.addEventListener('resize', fitTapArea);
+      window.addEventListener('pagehide', () => {
+        video.pause();
+        if (objectUrl) URL.revokeObjectURL(objectUrl);
+      });
+    })();
+  </script>
+</body>
+</html>
