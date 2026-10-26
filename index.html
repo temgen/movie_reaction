@@ -35,10 +35,14 @@
       position: relative; flex: 1 1 0; min-height: 0; width: 100%;
       background: #0c1424; border: 1px solid #253148; border-radius: 9px;
       overflow: hidden; isolation: isolate;
+      /* 動画上のジェスチャーだけを受け取り、ページ全体のピンチ拡大を防ぐ */
+      touch-action: none; -webkit-user-select: none; user-select: none;
     }
     .stage video {
       width: 100%; height: 100%; position: absolute; inset: 0;
       display: block; object-fit: contain; background: #0c1424;
+      transform-origin: center center; will-change: transform;
+      pointer-events: none;
     }
     .stage::before {
       content: ""; position: absolute; inset: 0; pointer-events: none;
@@ -64,8 +68,8 @@
     }
     .tap-surface {
       position: absolute; z-index: 2; display: none;
-      touch-action: manipulation; cursor: crosshair;
-      overflow: hidden; user-select: none; -webkit-user-select: none;
+      touch-action: none; cursor: crosshair;
+      user-select: none; -webkit-user-select: none;
     }
     .has-video .tap-surface { display: block; }
     .reaction-stamp {
@@ -279,6 +283,18 @@
       let currentReaction = null;
       let loaded = false;
 
+      // 拡大するのは動画だけ。操作バーやリアクションの大きさは変更しない。
+      const MAX_ZOOM = 5;
+      const MIN_ZOOM = 1;
+      let zoom = 1;
+      let panX = 0;
+      let panY = 0;
+      let touchMode = null; // tap / pan / pinch
+      let touchStart = null;
+      let pinchStart = null;
+      let mouseStart = null;
+      let safariGestureStart = null;
+
       const chooseVideo = () => fileInput.click();
       $('changeVideo').addEventListener('click', chooseVideo);
       $('emptyChoose').addEventListener('click', chooseVideo);
@@ -317,20 +333,63 @@
         soundBtn.setAttribute('aria-label', video.muted ? '音を出す' : '音を消す');
       }
 
-      function fitTapArea() {
-        if (!loaded || !video.videoWidth || !video.videoHeight) return;
+      function getNaturalImageSize() {
         const w = stage.clientWidth;
         const h = stage.clientHeight;
+        if (!w || !h || !video.videoWidth || !video.videoHeight) return null;
         const scale = Math.min(w / video.videoWidth, h / video.videoHeight);
-        const imageWidth = video.videoWidth * scale;
-        const imageHeight = video.videoHeight * scale;
-        tapSurface.style.left = `${(w - imageWidth) / 2}px`;
-        tapSurface.style.top = `${(h - imageHeight) / 2}px`;
-        tapSurface.style.width = `${imageWidth}px`;
-        tapSurface.style.height = `${imageHeight}px`;
+        return { w, h, imageW: video.videoWidth * scale, imageH: video.videoHeight * scale };
       }
 
-      function clearStamps() { tapSurface.replaceChildren(); }
+      function clampPan() {
+        const size = getNaturalImageSize();
+        if (!size) { panX = 0; panY = 0; return; }
+        // 動画が表示枠より小さい軸は常に中央。大きい軸では映像の端を越えない。
+        const limitX = Math.max(0, (size.imageW * zoom - size.w) / 2);
+        const limitY = Math.max(0, (size.imageH * zoom - size.h) / 2);
+        panX = Math.max(-limitX, Math.min(limitX, panX));
+        panY = Math.max(-limitY, Math.min(limitY, panY));
+      }
+
+      function fitTapArea() {
+        const size = getNaturalImageSize();
+        if (!loaded || !size) return;
+        clampPan();
+        // 映像だけを CSS transform で拡大し、ボタン・シークバーは一切変形しない。
+        video.style.transform = `translate3d(${panX}px, ${panY}px, 0) scale(${zoom})`;
+        // 当たり判定は「拡大後の映像」に合わせる（黒帯のタップで押されない）。
+        const imageW = size.imageW * zoom;
+        const imageH = size.imageH * zoom;
+        tapSurface.style.left = `${(size.w - imageW) / 2 + panX}px`;
+        tapSurface.style.top = `${(size.h - imageH) / 2 + panY}px`;
+        tapSurface.style.width = `${imageW}px`;
+        tapSurface.style.height = `${imageH}px`;
+      }
+
+      function resetZoom() {
+        zoom = 1;
+        panX = 0;
+        panY = 0;
+        video.style.transform = '';
+        fitTapArea();
+      }
+
+      // 指の中心位置にあった映像の箇所を、拡大後も指の中心へ置く。
+      function zoomAt(nextZoom, x, y) {
+        const rect = stage.getBoundingClientRect();
+        const cx = x - rect.left - rect.width / 2;
+        const cy = y - rect.top - rect.height / 2;
+        const anchorX = (cx - panX) / zoom;
+        const anchorY = (cy - panY) / zoom;
+        zoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, nextZoom));
+        panX = cx - anchorX * zoom;
+        panY = cy - anchorY * zoom;
+        fitTapArea();
+      }
+
+      function clearStamps() {
+        stage.querySelectorAll('.reaction-stamp').forEach(stamp => stamp.remove());
+      }
 
       function loadVideo(file) {
         if (!file) return;
@@ -345,6 +404,12 @@
         objectUrl = URL.createObjectURL(file);
         loaded = false;
         clearStamps();
+        touchMode = null;
+        touchStart = null;
+        pinchStart = null;
+        mouseStart = null;
+        safariGestureStart = null;
+        resetZoom();
         stage.classList.remove('has-video');
         emptyState.hidden = true;
         seek.value = 0;
@@ -366,6 +431,7 @@
 
       video.addEventListener('loadedmetadata', () => {
         loaded = true;
+        resetZoom();
         stage.classList.add('has-video');
         playBtn.disabled = false;
         soundBtn.disabled = false;
@@ -379,6 +445,7 @@
       video.addEventListener('error', () => {
         if (!objectUrl) return;
         loaded = false;
+        resetZoom();
         stage.classList.remove('has-video');
         emptyState.hidden = false;
         playBtn.disabled = true;
@@ -425,10 +492,17 @@
       cheerBtn.addEventListener('click', () => selectReaction('cheer'));
 
       function addStamp(x, y) {
+        if (!currentReaction) {
+          setStatus('先に「イイね！」か「がんばろう！」を選んでください。', 'warning');
+          return;
+        }
         const stamp = document.createElement('div');
         stamp.className = `reaction-stamp ${currentReaction}`;
-        stamp.style.left = `${x}px`;
-        stamp.style.top = `${y}px`;
+        // スタンプは stage に重ねるため、動画をズームしてもマークの大きさは一定。
+        const marginX = Math.min(65, stage.clientWidth / 2);
+        const marginY = Math.min(65, stage.clientHeight / 2);
+        stamp.style.left = `${Math.max(marginX, Math.min(stage.clientWidth - marginX, x))}px`;
+        stamp.style.top = `${Math.max(marginY, Math.min(stage.clientHeight - marginY, y))}px`;
         const icon = document.createElement('span');
         icon.className = 'stamp-icon';
         icon.textContent = currentReaction === 'like' ? '👍' : '😞';
@@ -436,26 +510,161 @@
         word.className = 'stamp-word';
         word.textContent = currentReaction === 'like' ? 'イイね！' : 'がんばろう！';
         stamp.append(icon, word);
-        tapSurface.append(stamp);
+        stage.append(stamp);
         stamp.addEventListener('animationend', () => stamp.remove(), { once: true });
-        // 万一アニメーションイベントが発火しない環境でも残さない
         setTimeout(() => stamp.remove(), 1850);
       }
-      tapSurface.addEventListener('pointerdown', event => {
-        if (!loaded || (event.pointerType === 'mouse' && event.button !== 0)) return;
+
+      function isVideoPoint(clientX, clientY) {
+        if (!loaded) return false;
+        const r = tapSurface.getBoundingClientRect();
+        const s = stage.getBoundingClientRect();
+        return clientX >= Math.max(r.left, s.left) && clientX <= Math.min(r.right, s.right)
+          && clientY >= Math.max(r.top, s.top) && clientY <= Math.min(r.bottom, s.bottom);
+      }
+
+      function stampAt(clientX, clientY) {
+        if (!isVideoPoint(clientX, clientY)) return;
+        const r = stage.getBoundingClientRect();
+        addStamp(clientX - r.left, clientY - r.top);
+      }
+
+      function twoTouches(touches) {
+        const a = touches[0], b = touches[1];
+        return {
+          distance: Math.max(1, Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY)),
+          x: (a.clientX + b.clientX) / 2,
+          y: (a.clientY + b.clientY) / 2
+        };
+      }
+
+      // iPad / iPhone: 動画上のタッチだけを受け取る。
+      // 1本指でタップ=リアクション、拡大中のドラッグ=映像移動、2本指=ピンチ。
+      stage.addEventListener('touchstart', event => {
+        if (!loaded) return;
         event.preventDefault();
-        if (!currentReaction) {
-          setStatus('先に「イイね！」か「がんばろう！」を選んでください。', 'warning');
-          return;
+        if (event.touches.length >= 2) {
+          const pos = twoTouches(event.touches);
+          const r = stage.getBoundingClientRect();
+          touchMode = 'pinch';
+          pinchStart = {
+            distance: pos.distance, zoom,
+            anchorX: (pos.x - r.left - r.width / 2 - panX) / zoom,
+            anchorY: (pos.y - r.top - r.height / 2 - panY) / zoom
+          };
+          touchStart = null;
+        } else if (event.touches.length === 1 && !touchMode) {
+          const t = event.touches[0];
+          touchMode = 'tap';
+          touchStart = { x: t.clientX, y: t.clientY, panX, panY };
         }
-        const rect = tapSurface.getBoundingClientRect();
-        // タップした位置を基準に表示（画面端では少しだけ内側に寄せる）
-        const marginX = Math.min(65, rect.width / 2);
-        const marginY = Math.min(65, rect.height / 2);
-        const x = Math.min(Math.max(event.clientX - rect.left, marginX), rect.width - marginX);
-        const y = Math.min(Math.max(event.clientY - rect.top, marginY), rect.height - marginY);
-        addStamp(x, y);
+      }, { passive: false });
+
+      stage.addEventListener('touchmove', event => {
+        if (!loaded) return;
+        event.preventDefault(); // ブラウザ全体の拡大やスクロールを防止
+        if (event.touches.length >= 2 && touchMode === 'pinch' && pinchStart) {
+          const pos = twoTouches(event.touches);
+          const r = stage.getBoundingClientRect();
+          zoom = Math.max(MIN_ZOOM, Math.min(MAX_ZOOM,
+            pinchStart.zoom * pos.distance / pinchStart.distance));
+          panX = pos.x - r.left - r.width / 2 - pinchStart.anchorX * zoom;
+          panY = pos.y - r.top - r.height / 2 - pinchStart.anchorY * zoom;
+          fitTapArea();
+        } else if (event.touches.length === 1 && touchMode === 'tap' && touchStart) {
+          const t = event.touches[0];
+          const dx = t.clientX - touchStart.x;
+          const dy = t.clientY - touchStart.y;
+          if (Math.hypot(dx, dy) > 7) touchMode = 'pan';
+          if (touchMode === 'pan' && zoom > 1) {
+            panX = touchStart.panX + dx;
+            panY = touchStart.panY + dy;
+            fitTapArea();
+          }
+        } else if (event.touches.length === 1 && touchMode === 'pan' && touchStart && zoom > 1) {
+          const t = event.touches[0];
+          panX = touchStart.panX + t.clientX - touchStart.x;
+          panY = touchStart.panY + t.clientY - touchStart.y;
+          fitTapArea();
+        }
+      }, { passive: false });
+
+      stage.addEventListener('touchend', event => {
+        if (!loaded) return;
+        event.preventDefault();
+        // ピンチ終了後に残った指を離してもスタンプは出さない。
+        if (event.touches.length === 0) {
+          if (touchMode === 'tap' && touchStart && event.changedTouches.length === 1) {
+            const t = event.changedTouches[0];
+            if (Math.hypot(t.clientX - touchStart.x, t.clientY - touchStart.y) <= 7)
+              stampAt(t.clientX, t.clientY);
+          }
+          touchMode = null;
+          touchStart = null;
+          pinchStart = null;
+        }
+      }, { passive: false });
+      stage.addEventListener('touchcancel', () => {
+        touchMode = null;
+        touchStart = null;
+        pinchStart = null;
       });
+
+      // PCマウスとペン入力でも従来どおりタップ可能。
+      // 拡大中はドラッグして映像を移動できる。
+      stage.addEventListener('pointerdown', event => {
+        if (!loaded || event.pointerType === 'touch' || event.button !== 0) return;
+        if (!isVideoPoint(event.clientX, event.clientY)) return;
+        mouseStart = { x: event.clientX, y: event.clientY, panX, panY, dragged: false };
+        stage.setPointerCapture(event.pointerId);
+      });
+      stage.addEventListener('pointermove', event => {
+        if (!mouseStart || event.pointerType === 'touch') return;
+        const dx = event.clientX - mouseStart.x;
+        const dy = event.clientY - mouseStart.y;
+        if (Math.hypot(dx, dy) > 7) mouseStart.dragged = true;
+        if (mouseStart.dragged && zoom > 1) {
+          panX = mouseStart.panX + dx;
+          panY = mouseStart.panY + dy;
+          fitTapArea();
+        }
+      });
+      stage.addEventListener('pointerup', event => {
+        if (!mouseStart || event.pointerType === 'touch') return;
+        if (!mouseStart.dragged) stampAt(event.clientX, event.clientY);
+        mouseStart = null;
+      });
+      stage.addEventListener('pointercancel', () => { mouseStart = null; });
+
+      // PCタッチパッド（Ctrl+ホイール型ピンチ）にも対応。
+      stage.addEventListener('wheel', event => {
+        if (!loaded || !event.ctrlKey) return;
+        event.preventDefault();
+        zoomAt(zoom * Math.exp(-event.deltaY * .012), event.clientX, event.clientY);
+      }, { passive: false });
+
+      // Safari特有のgestureイベントでもページ全体の拡大を防ぐ。
+      stage.addEventListener('gesturestart', event => {
+        if (!loaded) return;
+        event.preventDefault();
+        safariGestureStart = { zoom };
+      }, { passive: false });
+      stage.addEventListener('gesturechange', event => {
+        if (!loaded) return;
+        event.preventDefault();
+        // iOSのTouchEventと二重に処理しない。MacのSafariではこちらを利用。
+        if (safariGestureStart && !event.touches?.length && touchMode !== 'pinch') {
+          const r = stage.getBoundingClientRect();
+          zoomAt(safariGestureStart.zoom * event.scale,
+            Number.isFinite(event.clientX) ? event.clientX : r.left + r.width / 2,
+            Number.isFinite(event.clientY) ? event.clientY : r.top + r.height / 2);
+        }
+      }, { passive: false });
+      stage.addEventListener('gestureend', event => {
+        if (!loaded) return;
+        event.preventDefault();
+        safariGestureStart = null;
+      }, { passive: false });
 
       if (typeof ResizeObserver !== 'undefined') new ResizeObserver(fitTapArea).observe(stage);
       window.addEventListener('resize', fitTapArea);
